@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 import base64
 import re
 from email.utils import parsedate_to_datetime
+from datetime import datetime
 import pyperclip
 from dotenv import load_dotenv
 
@@ -58,38 +59,14 @@ def extract_html_payload(payload):
                 return html
     return None
 
-def find_order_total_from_html(html):
-    soup = BeautifulSoup(html, 'html.parser')
-    
-    # Find the p tag that contains "ORDER TOTAL:"
-    order_total_label = soup.find("p", text=re.compile("ORDER TOTAL", re.I))
-    if not order_total_label:
-        return None
-
-    # Step 2: Navigate to the parent <tr>, then to the next <tr>
-    tr = order_total_label.find_parent('tr')
-    next_tr = tr.find_next_sibling('tr') if tr else None
-    if not next_tr:
-        return None
-
-    # Step 3: Find the <p> inside next <tr>
-    price_p = next_tr.find('p')
-    if not price_p:
-        return None
-
-    # Step 4: Clean & return text
-    price = price_p.get_text(strip=True).replace('\u200c', '')
- 
-    return price
-
-
-def parse_enercare_receipt(html):
+ENERCARE_TABLE_HEADER = "Your payment receipt:"
+def parse_enercare_receipt(html, table_header=ENERCARE_TABLE_HEADER):
     soup = BeautifulSoup(html, 'html.parser')
     
     # Step 1: Locate the correct table that contains the receipt
     target_table = None
     for table in soup.find_all("table"):
-        if table.find(string=lambda s: s and "Your payment receipt:" in s):
+        if table.find(string=lambda s: s and table_header in s):
             target_table = table
             break
 
@@ -100,29 +77,28 @@ def parse_enercare_receipt(html):
     # Step 2: Define the fields we want
     receipt_headers = [
         "ORDER DATE",
-        "BILLING ACCOUNT NUMBER",
+        # "BILLING ACCOUNT NUMBER",
         "PAYMENT REFERENCE ID",
         "ORDER TOTAL",
-        "PAYMENT METHOD"
+        # "PAYMENT METHOD"
     ]
 
     # Step 3: Walk through <tr> tags
-    trs = target_table.find_all("tr")
+    rows = target_table.find_all("tr")
     data = {}
 
     i = 0
-    while i < len(trs) - 1:
-        label_td = trs[i].find("td")
-        if label_td:
-            label_text = label_td.get_text(strip=True).rstrip(":").upper()
+    while i < len(rows) - 1:
+        label_cell = rows[i].find("td")
+        if label_cell:
+            label_text = label_cell.get_text(strip=True).rstrip(":").upper()
             if label_text in receipt_headers:
-                value_td = trs[i + 1].find("td")
-                if value_td:
-                    data[label_text] = value_td.get_text(strip=True).replace('\u200c', '')
+                value_cell = rows[i + 1].find("td")
+                if value_cell:
+                    data[label_text] = value_cell.get_text(strip=True).replace('\u200c', '')
                 i += 1  # skip next row since it's the value
         i += 1
 
-    print(data)
     return data
 
 
@@ -145,15 +121,23 @@ def fetch_emails(gmail_service, query='label:inbox', max_results=5):
                 body_data = part['body'].get('data')
                 
                 decoded = base64.urlsafe_b64decode(body_data).decode('utf-8', errors='ignore')
-                order_total = find_order_total_from_html(decoded)
+                order_total_data = parse_enercare_receipt(decoded)
                 
-                parse_enercare_receipt(decoded)
+                
+                order_date, payment_reference_id, order_total = order_total_data.values()
+                
+                input_format = "%m/%d/%Y"
+                date_object = datetime.strptime(order_date, input_format)
+                output_format = "%d %b %Y"
+                formatted_date = date_object.strftime(output_format)
+                print(formatted_date)
+                
                 break
 
-        # Parse into datetime object
-        dt = parsedate_to_datetime(date)
-        # Format it to "21 Mar 2025"
-        formatted_date = dt.strftime('%d %b %Y')
+        # # Parse into datetime object
+        # dt = parsedate_to_datetime(date)
+        # # Format it to "21 Mar 2025"
+        # formatted_date = dt.strftime('%d %b %Y')
         item_name = 'enercare'
 
 
